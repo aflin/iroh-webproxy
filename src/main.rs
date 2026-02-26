@@ -272,6 +272,7 @@ fn main() -> Result<()> {
 }
 
 /// Double-fork to detach from terminal and become a proper daemon.
+#[cfg(unix)]
 fn daemonize() -> Result<()> {
     unsafe {
         // First fork — parent exits, child continues
@@ -305,6 +306,28 @@ fn daemonize() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Re-launch as a detached process without --daemon, then exit the parent.
+#[cfg(windows)]
+fn daemonize() -> Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let exe = std::env::current_exe()?;
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|a| a != "--daemon")
+        .collect();
+
+    std::process::Command::new(exe)
+        .args(&args)
+        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+        .spawn()?;
+
+    std::process::exit(0);
 }
 
 fn resolve_log_level(explicit: Option<LogLevel>, daemon: bool) -> &'static str {
