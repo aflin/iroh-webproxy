@@ -89,6 +89,10 @@ enum Command {
         /// Detach from terminal and run in the background (implies --log-level none)
         #[arg(long)]
         daemon: bool,
+
+        /// Write the process ID to this file after daemonizing
+        #[arg(long, value_name = "PATH")]
+        pidfile: Option<String>,
     },
 
     /// Run as server proxy: accept iroh connections, forward to local HTTP.
@@ -130,6 +134,10 @@ enum Command {
         /// Detach from terminal and run in the background (implies --log-level none)
         #[arg(long)]
         daemon: bool,
+
+        /// Write the process ID to this file after daemonizing
+        #[arg(long, value_name = "PATH")]
+        pidfile: Option<String>,
     },
 }
 
@@ -155,6 +163,7 @@ fn main() -> Result<()> {
             secret_key,
             log_level,
             daemon,
+            pidfile,
         } => {
             let sk = transport::load_secret_key(secret_key.as_deref())?;
             println!("{}", sk.public());
@@ -162,6 +171,10 @@ fn main() -> Result<()> {
 
             if daemon {
                 daemonize()?;
+            }
+
+            if let Some(ref path) = pidfile {
+                write_pidfile(path)?;
             }
 
             init_tracing(resolve_log_level(log_level, daemon));
@@ -228,6 +241,7 @@ fn main() -> Result<()> {
             no_key_load,
             log_level,
             daemon,
+            pidfile,
         } => {
             let key_path = key_file
                 .as_deref()
@@ -252,6 +266,10 @@ fn main() -> Result<()> {
                 daemonize()?;
             }
 
+            if let Some(ref path) = pidfile {
+                write_pidfile(path)?;
+            }
+
             init_tracing(resolve_log_level(log_level, daemon));
 
             tokio::runtime::Builder::new_multi_thread()
@@ -268,6 +286,13 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Write the current process ID to a file (no trailing newline).
+fn write_pidfile(path: &str) -> Result<()> {
+    let mut f = std::fs::File::create(path)?;
+    write!(f, "{}", std::process::id())?;
     Ok(())
 }
 
