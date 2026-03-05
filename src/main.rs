@@ -32,16 +32,23 @@ enum Command {
     /// Run as client proxy: accept local HTTP/HTTPS, tunnel over iroh.
     ///
     /// Listens for HTTP requests and tunnels them to an iroh-webproxy server
-    /// identified by its node ID. Two URL formats are supported:
+    /// identified by its node ID. The URL format is:
     ///
-    ///   Subdomain:  http://<nodeId>.localhost:8080/path  (browsers)
+    ///   http://<nodeId>.<host-suffix>:8080/path
     ///
-    /// The subdomain format preserves absolute paths in HTML pages.
+    /// The default host suffix is "localhost". With a wildcard DNS record
+    /// (e.g. *.iroh.example.com) and --host-suffix iroh.example.com, clients
+    /// can use http://<nodeId>.iroh.example.com:8080/path instead.
+    ///
     /// HTTPS is enabled by providing one of --self-sign, --letsencrypt,
     /// or --tls-cert/--tls-key.
     ///
     /// The node ID is printed to stdout on startup.
     Client {
+        /// Host suffix for routing (the domain after the node ID subdomain)
+        #[arg(long, default_value = "localhost")]
+        host_suffix: String,
+
         /// HTTP listen port
         #[arg(long, default_value = "8080")]
         http_port: u16,
@@ -177,6 +184,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Client {
+            host_suffix,
             http_port,
             https_port,
             self_sign,
@@ -217,7 +225,7 @@ fn main() -> Result<()> {
             }
 
             let tls_mode = if self_sign {
-                Some(tls::TlsMode::SelfSigned)
+                Some(tls::TlsMode::SelfSigned { host_suffix: host_suffix.clone() })
             } else if let Some(domain) = letsencrypt {
                 Some(tls::TlsMode::LetsEncrypt(domain))
             } else if let (Some(cert), Some(key)) = (tls_cert, tls_key) {
@@ -255,7 +263,7 @@ fn main() -> Result<()> {
                 .build()?
                 .block_on(async {
                     let endpoint = Endpoint::builder().secret_key(sk).bind().await?;
-                    client::run(endpoint, http_addrs, https_addrs, tls_config).await
+                    client::run(endpoint, http_addrs, https_addrs, tls_config, host_suffix).await
                 })?;
         }
 

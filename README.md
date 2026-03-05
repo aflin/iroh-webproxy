@@ -82,23 +82,33 @@ curl -H "Host: <nodeId>.localhost:8080" http://127.0.0.1:8080/
 ## URL formats
 
 The client proxy routes requests based on the `Host` header. The subdomain before
-`.localhost` identifies the iroh node to connect to.
+the host suffix identifies the iroh node to connect to. The default suffix is
+`.localhost` (configurable with `--host-suffix`).
 
 | Format | Example | Notes |
 |--------|---------|-------|
-| Direct node ID | `http://<64-hex-chars>.localhost:8080/` | Firefox, curl |
-| Split node ID | `http://<32hex>.<32hex>.localhost:8080/` | Chrome (63-char DNS label limit) |
+| Direct node ID | `http://<64-hex-chars>.localhost:8080/` | Works over plain HTTP with curl, some browsers |
+| Split node ID | `http://<hex>.<hex>.localhost:8080/` | Insert a dot anywhere (see below) |
 | DNS TXT lookup | `http://mysite.example.com.localhost:8080/` | Resolves node ID from DNS |
 
-### Chrome split node ID
+### Split node ID
 
-Chrome enforces the DNS 63-character label limit, so a 64-character node ID won't
-work as a single subdomain label. Instead, split the node ID into two 32-character
-halves separated by a dot:
+DNS labels are limited to 63 characters, but an iroh node ID is 64 hex
+characters. A 64-character label works in some cases (e.g. curl, Firefox over
+plain HTTP) but will break in others — notably Chrome, and any browser when
+using HTTPS/TLS (which validates hostnames against DNS rules).
+
+To work around this, insert a dot anywhere in the node ID to split it into
+labels shorter than 63 characters. The proxy strips all dots and reassembles
+the hex string, so the dot placement doesn't matter:
 
 ```
 http://ef4987c41374c912deb3cc03a420da8d.0b6e93740cc0295936a48e59fa4ba2df.localhost:8080/
+http://ef4987c.41374c912deb3cc03a420da8d0b6e93740cc0295936a48e59fa4ba2df.localhost:8080/
+http://ef4987c41374c912deb3cc.03a420da8d0b6e93740cc0295936a48e59fa4ba2df.localhost:8080/
 ```
+
+All three examples above resolve to the same node ID.
 
 ### DNS TXT record resolution
 
@@ -191,6 +201,7 @@ iroh-webproxy client [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--host-suffix <DOMAIN>` | `localhost` | Host suffix for routing (see [custom host suffix](#custom-host-suffix)) |
 | `--http-port <PORT>` | `8080` | HTTP listen port |
 | `--https-port <PORT>` | `8443` | HTTPS listen port (only when TLS is enabled) |
 | `--ip-address <ADDR>` | `127.0.0.1` | IPv4 bind address |
@@ -213,6 +224,27 @@ Enable HTTPS by providing exactly one of:
 
 When TLS is enabled, the client listens on both the HTTP port and the HTTPS port.
 
+### Custom host suffix
+
+By default, the client routes requests based on `<nodeId>.localhost`. With a
+wildcard DNS record pointing to the client machine, you can use a custom domain
+instead:
+
+```sh
+# DNS: *.iroh.example.com → client machine IP
+iroh-webproxy client --host-suffix iroh.example.com --bind-all
+```
+
+Browsers can then access proxied services at:
+
+```
+http://<nodeId>.iroh.example.com:8080/
+```
+
+When using `--self-sign` with a custom host suffix, the generated certificate
+automatically includes `*.<suffix>` as a SAN. For production use, provide a
+real wildcard certificate via `--letsencrypt` or `--tls-cert`/`--tls-key`.
+
 ## Daemon mode
 
 Both `client` and `server` support `--daemon` to detach from the terminal using a
@@ -232,6 +264,56 @@ iroh-webproxy server --daemon --pidfile /tmp/iroh-server.pid
 # Later, stop the daemon:
 kill "$(cat /tmp/iroh-server.pid)"
 ```
+
+## Theoretical vulnerabilities
+
+### Host header mismatch
+
+The backend server receives requests with `Host: <nodeId>.localhost:8080` (or
+whatever host suffix is configured) rather than its real hostname. Servers that
+rely on the Host header for virtual hosting, CORS origin checks, or generating
+absolute URLs may not work correctly. Most single-site backends are unaffected.
+
+### Cookie scoping with custom host suffix
+
+When using `--host-suffix` with a shared domain (e.g. `iroh.example.com`), a
+backend server could theoretically set a cookie with
+`Domain=.iroh.example.com`, which the browser would then send to every node ID
+subdomain under that suffix. This would require the backend to specifically know
+about and target the proxy's host suffix — no normal backend would do this
+accidentally. Cookies set without a `Domain` attribute (the common case) are
+scoped to the exact host and do not leak. Browser `localStorage` and other
+storage APIs are strictly origin-scoped and are not affected.
+
+### Man-in-the-middle at the client proxy
+
+The client proxy terminates the browser's HTTP connection and has full access to
+the plaintext request and response bytes. A modified client proxy could read or
+alter traffic in transit. This is inherent to any local proxy (VPN clients, SSH
+tunnels, reverse proxies all have the same property). In the typical
+configuration — running on the same machine as the browser, bound to
+`127.0.0.1` — this is not a practical concern since the operator of the machine
+already has full access. It becomes relevant when the client is exposed to
+other users' browsers via `--bind-all` or `--host-suffix` with a network-facing
+DNS record, as those users are trusting the client proxy operator.
+
+### Plaintext secret key storage
+
+The server's secret key is stored as a hex string in a plain text file
+(`.iroh-webproxy-secret-key`). On Unix the file is created with `0600`
+permissions (owner-only read/write), but if the file is compromised an attacker
+could impersonate the server with the same node ID. Use `--no-key-save` to
+avoid writing the key to disk, or store it in a more secure location and pass
+it via `--secret-key` or `--key-file`.
+
+### Open proxy with --bind-all
+
+When the client is started with `--bind-all`, it listens on all network
+interfaces. Anyone on the network who can reach the client's port and who knows
+a valid iroh node ID can use it as a gateway to that node's backend server. On
+`127.0.0.1` (the default) only local processes can connect. If you need
+network-facing access, consider firewall rules to restrict which hosts can reach
+the client's ports.
 
 ## License
 

@@ -10,6 +10,7 @@ final class PreferencesWindow: NSWindowController {
     private var httpsPortField: NSTextField!
     private var selfSignCheck: NSButton!
     private var ipAddressField: NSTextField!
+    private var hostSuffixField: NSTextField!
     private var targetAddressField: NSTextField!
     private var keyFileField: NSTextField!
     private var targetTlsCheck: NSButton!
@@ -23,7 +24,7 @@ final class PreferencesWindow: NSWindowController {
     init(proxyManager: ProxyManager) {
         self.proxyManager = proxyManager
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 450),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)
@@ -82,6 +83,10 @@ final class PreferencesWindow: NSWindowController {
 
         ipAddressField = makeTextField(width: 160)
         clientSection.addArrangedSubview(makeRow("Bind Address:", ipAddressField))
+
+        hostSuffixField = makeTextField(width: 200)
+        hostSuffixField.placeholderString = "localhost"
+        clientSection.addArrangedSubview(makeRow("Host Suffix:", hostSuffixField))
 
         root.addArrangedSubview(clientSection)
 
@@ -150,6 +155,7 @@ final class PreferencesWindow: NSWindowController {
         httpsPortField.stringValue = "\(settings.httpsPort)"
         selfSignCheck.state = settings.selfSign ? .on : .off
         ipAddressField.stringValue = settings.ipAddress
+        hostSuffixField.stringValue = settings.hostSuffix
         targetAddressField.stringValue = settings.targetAddress
         targetTlsCheck.state = settings.targetTls ? .on : .off
         insecureCheck.state = settings.insecure ? .on : .off
@@ -167,6 +173,7 @@ final class PreferencesWindow: NSWindowController {
         settings.httpsPort = Int(httpsPortField.stringValue) ?? 8443
         settings.selfSign = selfSignCheck.state == .on
         settings.ipAddress = ipAddressField.stringValue
+        settings.hostSuffix = hostSuffixField.stringValue.isEmpty ? "localhost" : hostSuffixField.stringValue
         settings.targetAddress = targetAddressField.stringValue
         settings.targetTls = targetTlsCheck.state == .on
         settings.insecure = insecureCheck.state == .on

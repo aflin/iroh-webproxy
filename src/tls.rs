@@ -8,14 +8,14 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
 use tracing::warn;
 
 pub enum TlsMode {
-    SelfSigned,
+    SelfSigned { host_suffix: String },
     LetsEncrypt(String),
     Manual { cert: String, key: String },
 }
 
 pub fn build_tls_config(mode: &TlsMode) -> Result<Arc<rustls::ServerConfig>> {
     let (certs, key) = match mode {
-        TlsMode::SelfSigned => build_self_signed()?,
+        TlsMode::SelfSigned { host_suffix } => build_self_signed(host_suffix)?,
         TlsMode::LetsEncrypt(domain) => load_letsencrypt(domain)?,
         TlsMode::Manual { cert, key } => load_pem_files(cert, key)?,
     };
@@ -28,14 +28,20 @@ pub fn build_tls_config(mode: &TlsMode) -> Result<Arc<rustls::ServerConfig>> {
     Ok(Arc::new(config))
 }
 
-fn build_self_signed() -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+fn build_self_signed(host_suffix: &str) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
     warn!("using self-signed certificate — clients will need to skip verification (-k with curl)");
 
-    let subject_alt_names = vec![
+    let mut subject_alt_names = vec![
         "localhost".to_string(),
         "127.0.0.1".to_string(),
         "::1".to_string(),
     ];
+
+    if host_suffix != "localhost" {
+        // Add wildcard and bare domain for custom host suffixes
+        subject_alt_names.push(format!("*.{}", host_suffix));
+        subject_alt_names.push(host_suffix.to_string());
+    }
 
     let certified_key = rcgen::generate_simple_self_signed(subject_alt_names)
         .context("failed to generate self-signed certificate")?;

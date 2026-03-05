@@ -17,6 +17,7 @@ final class Settings {
         case httpsPort
         case selfSign
         case ipAddress
+        case hostSuffix
         case targetAddress
         case keyFilePath
         case targetTls
@@ -34,6 +35,7 @@ final class Settings {
             Key.httpsPort.rawValue: 8443,
             Key.selfSign.rawValue: true,
             Key.ipAddress.rawValue: "127.0.0.1",
+            Key.hostSuffix.rawValue: "localhost",
             Key.targetAddress.rawValue: "127.0.0.1:8088",
             Key.keyFilePath.rawValue: "",
             Key.targetTls.rawValue: false,
@@ -68,6 +70,11 @@ final class Settings {
     var ipAddress: String {
         get { defaults.string(forKey: Key.ipAddress.rawValue) ?? "127.0.0.1" }
         set { defaults.set(newValue, forKey: Key.ipAddress.rawValue) }
+    }
+
+    var hostSuffix: String {
+        get { defaults.string(forKey: Key.hostSuffix.rawValue) ?? "localhost" }
+        set { defaults.set(newValue, forKey: Key.hostSuffix.rawValue) }
     }
 
     var targetAddress: String {
@@ -136,6 +143,9 @@ final class Settings {
         var args = ["client"]
         args += ["--http-port", "\(httpPort)"]
         args += ["--ip-address", ipAddress]
+        if hostSuffix != "localhost" && !hostSuffix.isEmpty {
+            args += ["--host-suffix", hostSuffix]
+        }
         if selfSign {
             args += ["--self-sign"]
             args += ["--https-port", "\(httpsPort)"]

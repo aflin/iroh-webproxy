@@ -24,8 +24,10 @@ pub async fn run(
     http_addrs: Vec<SocketAddr>,
     https_addrs: Vec<SocketAddr>,
     tls_config: Option<Arc<rustls::ServerConfig>>,
+    host_suffix: String,
 ) -> Result<()> {
     let pool: ConnPool = Arc::new(Mutex::new(HashMap::new()));
+    let suffix: Arc<str> = Arc::from(format!(".{}", host_suffix));
     let mut handles = Vec::new();
 
     for addr in http_addrs {
@@ -46,6 +48,7 @@ pub async fn run(
 
         let ep = endpoint.clone();
         let pool = pool.clone();
+        let suffix = suffix.clone();
         handles.push(tokio::spawn(async move {
             loop {
                 let (stream, peer) = match listener.accept().await {
@@ -58,8 +61,9 @@ pub async fn run(
                 info!("client: http connection from {}", peer);
                 let ep = ep.clone();
                 let pool = pool.clone();
+                let suffix = suffix.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, ep, pool).await {
+                    if let Err(e) = handle_connection(stream, ep, pool, &suffix).await {
                         warn!("client: connection error: {}", e);
                     }
                 });
@@ -89,6 +93,7 @@ pub async fn run(
             let ep = endpoint.clone();
             let pool = pool.clone();
             let acceptor = acceptor.clone();
+            let suffix = suffix.clone();
             handles.push(tokio::spawn(async move {
                 loop {
                     let (stream, peer) = match listener.accept().await {
@@ -102,6 +107,7 @@ pub async fn run(
                     let acceptor = acceptor.clone();
                     let ep = ep.clone();
                     let pool = pool.clone();
+                    let suffix = suffix.clone();
                     tokio::spawn(async move {
                         let tls_stream = match acceptor.accept(stream).await {
                             Ok(s) => s,
@@ -110,7 +116,7 @@ pub async fn run(
                                 return;
                             }
                         };
-                        if let Err(e) = handle_connection(tls_stream, ep, pool).await {
+                        if let Err(e) = handle_connection(tls_stream, ep, pool, &suffix).await {
                             warn!("client: connection error: {}", e);
                         }
                     });
@@ -132,7 +138,7 @@ pub async fn run(
 
 /// Handle a single browser connection: read HTTP headers to determine the
 /// target node, then tunnel all bytes verbatim through a QUIC bidi stream.
-async fn handle_connection<S>(mut stream: S, endpoint: Endpoint, pool: ConnPool) -> Result<()>
+async fn handle_connection<S>(mut stream: S, endpoint: Endpoint, pool: ConnPool, host_suffix: &str) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -159,13 +165,13 @@ where
     }
 
     // Parse the Host header to determine the target iroh node.
-    let node_id = match parse_node_id(&buf[..header_end]).await {
+    let node_id = match parse_node_id(&buf[..header_end], host_suffix).await {
         Some(id) => id,
         None => {
             send_error(
                 &mut stream,
                 400,
-                "Bad Request: use http://<nodeId>.localhost:<port>/path\n",
+                &format!("Bad Request: use http://<nodeId>{}:<port>/path\n", host_suffix),
             )
             .await;
             return Ok(());
@@ -249,17 +255,23 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 /// Extract the node ID from the HTTP Host header.
 ///
 /// Supports:
-///   - `<64-char-hex>.localhost[:port]`            (Firefox, curl)
-///   - `<first32hex>.<last32hex>.localhost[:port]`  (Chrome — 63-char DNS label limit)
-///   - `<domain>.localhost[:port]`                  (DNS TXT lookup for `iroh-nodeId=<hex>`)
-async fn parse_node_id(headers: &[u8]) -> Option<PublicKey> {
+///   - `<64-char-hex>.<suffix>[:port]`        (plain HTTP with curl, etc.)
+///   - `<hex>.<hex>.<suffix>[:port]`          (dot-split to stay under 63-char DNS label limit)
+///   - `<domain>.<suffix>[:port]`             (DNS TXT lookup for `iroh-nodeId=<hex>`)
+///
+/// The dot-split form accepts dots at any position — the dots are stripped and
+/// the remaining characters are checked as a 64-char hex node ID.
+///
+/// The suffix is ".localhost" by default, configurable via --host-suffix.
+async fn parse_node_id(headers: &[u8], host_suffix: &str) -> Option<PublicKey> {
     let host = get_host_header(headers)?;
     // Strip port if present
     let host_name = host.split(':').next().unwrap_or(host);
-    let node_part = host_name.strip_suffix(".localhost")?;
+    let node_part = host_name.strip_suffix(host_suffix)?;
 
-    if node_part.len() == 65 && node_part.contains('.') {
-        // Chrome split-hex: two labels totalling 64 hex chars + 1 dot
+    if node_part.contains('.') {
+        // Split node ID: dots inserted to keep each DNS label under 63 chars.
+        // Strip all dots and check if the result is a valid 64-char hex node ID.
         let joined: String = node_part.chars().filter(|c| *c != '.').collect();
         if joined.len() == 64 && joined.chars().all(|c| c.is_ascii_alphanumeric()) {
             return joined.parse::<PublicKey>().ok();
