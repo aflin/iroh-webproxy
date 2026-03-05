@@ -24,10 +24,12 @@ pub async fn run(
     http_addrs: Vec<SocketAddr>,
     https_addrs: Vec<SocketAddr>,
     tls_config: Option<Arc<rustls::ServerConfig>>,
-    host_suffix: String,
+    host_suffixes: Vec<String>,
 ) -> Result<()> {
     let pool: ConnPool = Arc::new(Mutex::new(HashMap::new()));
-    let suffix: Arc<str> = Arc::from(format!(".{}", host_suffix));
+    let suffixes: Arc<Vec<Arc<str>>> = Arc::new(
+        host_suffixes.iter().map(|s| Arc::from(format!(".{}", s))).collect(),
+    );
     let mut handles = Vec::new();
 
     for addr in http_addrs {
@@ -48,7 +50,7 @@ pub async fn run(
 
         let ep = endpoint.clone();
         let pool = pool.clone();
-        let suffix = suffix.clone();
+        let suffixes = suffixes.clone();
         handles.push(tokio::spawn(async move {
             loop {
                 let (stream, peer) = match listener.accept().await {
@@ -61,9 +63,9 @@ pub async fn run(
                 info!("client: http connection from {}", peer);
                 let ep = ep.clone();
                 let pool = pool.clone();
-                let suffix = suffix.clone();
+                let suffixes = suffixes.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, ep, pool, &suffix).await {
+                    if let Err(e) = handle_connection(stream, ep, pool, &suffixes).await {
                         warn!("client: connection error: {}", e);
                     }
                 });
@@ -93,7 +95,7 @@ pub async fn run(
             let ep = endpoint.clone();
             let pool = pool.clone();
             let acceptor = acceptor.clone();
-            let suffix = suffix.clone();
+            let suffixes = suffixes.clone();
             handles.push(tokio::spawn(async move {
                 loop {
                     let (stream, peer) = match listener.accept().await {
@@ -107,7 +109,7 @@ pub async fn run(
                     let acceptor = acceptor.clone();
                     let ep = ep.clone();
                     let pool = pool.clone();
-                    let suffix = suffix.clone();
+                    let suffixes = suffixes.clone();
                     tokio::spawn(async move {
                         let tls_stream = match acceptor.accept(stream).await {
                             Ok(s) => s,
@@ -116,7 +118,7 @@ pub async fn run(
                                 return;
                             }
                         };
-                        if let Err(e) = handle_connection(tls_stream, ep, pool, &suffix).await {
+                        if let Err(e) = handle_connection(tls_stream, ep, pool, &suffixes).await {
                             warn!("client: connection error: {}", e);
                         }
                     });
@@ -138,7 +140,7 @@ pub async fn run(
 
 /// Handle a single browser connection: read HTTP headers to determine the
 /// target node, then tunnel all bytes verbatim through a QUIC bidi stream.
-async fn handle_connection<S>(mut stream: S, endpoint: Endpoint, pool: ConnPool, host_suffix: &str) -> Result<()>
+async fn handle_connection<S>(mut stream: S, endpoint: Endpoint, pool: ConnPool, host_suffixes: &[Arc<str>]) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -165,13 +167,14 @@ where
     }
 
     // Parse the Host header to determine the target iroh node.
-    let node_id = match parse_node_id(&buf[..header_end], host_suffix).await {
+    let node_id = match parse_node_id(&buf[..header_end], host_suffixes).await {
         Some(id) => id,
         None => {
+            let example_suffix = host_suffixes.first().map(|s| s.as_ref()).unwrap_or(".localhost");
             send_error(
                 &mut stream,
                 400,
-                &format!("Bad Request: use http://<nodeId>{}:<port>/path\n", host_suffix),
+                &format!("Bad Request: use http://<nodeId>{}:<port>/path\n", example_suffix),
             )
             .await;
             return Ok(());
@@ -263,26 +266,36 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 /// the remaining characters are checked as a 64-char hex node ID.
 ///
 /// The suffix is ".localhost" by default, configurable via --host-suffix.
-async fn parse_node_id(headers: &[u8], host_suffix: &str) -> Option<PublicKey> {
+async fn parse_node_id(headers: &[u8], host_suffixes: &[Arc<str>]) -> Option<PublicKey> {
     let host = get_host_header(headers)?;
     // Strip port if present
     let host_name = host.split(':').next().unwrap_or(host);
-    let node_part = host_name.strip_suffix(host_suffix)?;
 
-    if node_part.contains('.') {
-        // Split node ID: dots inserted to keep each DNS label under 63 chars.
-        // Strip all dots and check if the result is a valid 64-char hex node ID.
-        let joined: String = node_part.chars().filter(|c| *c != '.').collect();
-        if joined.len() == 64 && joined.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return joined.parse::<PublicKey>().ok();
+    for suffix in host_suffixes {
+        let node_part = match host_name.strip_suffix(suffix.as_ref()) {
+            Some(part) => part,
+            None => continue,
+        };
+
+        if node_part.contains('.') {
+            // Split node ID: dots inserted to keep each DNS label under 63 chars.
+            // Strip all dots and check if the result is a valid 64-char hex node ID.
+            let joined: String = node_part.chars().filter(|c| *c != '.').collect();
+            if joined.len() == 64 && joined.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return joined.parse::<PublicKey>().ok();
+            }
+        } else if node_part.len() == 64 && node_part.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return node_part.parse::<PublicKey>().ok();
         }
-    } else if node_part.len() == 64 && node_part.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return node_part.parse::<PublicKey>().ok();
+
+        // Fallback: treat node_part as a domain name and look up TXT records
+        // for an `iroh-nodeId=<nodeId>` entry.
+        if let Some(pk) = resolve_node_id_from_dns(node_part).await {
+            return Some(pk);
+        }
     }
 
-    // Fallback: treat node_part as a domain name and look up TXT records
-    // for an `iroh-nodeId=<nodeId>` entry.
-    resolve_node_id_from_dns(node_part).await
+    None
 }
 
 /// Look up DNS TXT records for `domain` and find the last record matching

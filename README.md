@@ -73,6 +73,14 @@ Open a browser to:
 http://<nodeId>.localhost:8080/
 ```
 
+On macOS, if `.localhost` subdomains don't resolve (see
+[macOS note](#macos-note-localhost-subdomain-resolution)), use
+`irohproxy.net` instead — it resolves `*.irohproxy.net` to `127.0.0.1`:
+
+```
+http://<nodeId>.irohproxy.net:8080/
+```
+
 Or with curl:
 
 ```sh
@@ -82,14 +90,33 @@ curl -H "Host: <nodeId>.localhost:8080" http://127.0.0.1:8080/
 ## URL formats
 
 The client proxy routes requests based on the `Host` header. The subdomain before
-the host suffix identifies the iroh node to connect to. The default suffix is
-`.localhost` (configurable with `--host-suffix`).
+the host suffix identifies the iroh node to connect to. By default the client
+accepts both `.localhost` and `.irohproxy.net` (configurable with
+`--host-suffix`).
 
 | Format | Example | Notes |
 |--------|---------|-------|
 | Direct node ID | `http://<64-hex-chars>.localhost:8080/` | Works over plain HTTP with curl, some browsers |
 | Split node ID | `http://<hex>.<hex>.localhost:8080/` | Insert a dot anywhere (see below) |
 | DNS TXT lookup | `http://mysite.example.com.localhost:8080/` | Resolves node ID from DNS |
+
+### macOS note: `.localhost` subdomain resolution
+
+Chrome and Firefox resolve `*.localhost` subdomains to `127.0.0.1` internally (per
+RFC 6761), but **Safari, Finder (WebDAV), and other native macOS apps** use the
+system DNS resolver (`mDNSResponder`), which does not.
+
+To work around this, use `*.irohproxy.net` instead — it resolves to `127.0.0.1`
+via public DNS and works with all macOS apps:
+
+```
+http://<nodeId>.irohproxy.net:8080/
+```
+
+The client accepts both `.localhost` and `.irohproxy.net` by default, so no
+configuration change is needed. Alternatively, add per-node `/etc/hosts` entries
+or use a real domain with wildcard DNS (see
+[custom host suffix](#custom-host-suffix)).
 
 ### Split node ID
 
@@ -201,7 +228,7 @@ iroh-webproxy client [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--host-suffix <DOMAIN>` | `localhost` | Host suffix for routing (see [custom host suffix](#custom-host-suffix)) |
+| `--host-suffix <DOMAIN>` | `localhost` | Host suffix for routing; default accepts both `.localhost` and `.irohproxy.net` (see [custom host suffix](#custom-host-suffix)) |
 | `--http-port <PORT>` | `8080` | HTTP listen port |
 | `--https-port <PORT>` | `8443` | HTTPS listen port (only when TLS is enabled) |
 | `--ip-address <ADDR>` | `127.0.0.1` | IPv4 bind address |

@@ -36,16 +36,23 @@ enum Command {
     ///
     ///   http://<nodeId>.<host-suffix>:8080/path
     ///
-    /// The default host suffix is "localhost". With a wildcard DNS record
-    /// (e.g. *.iroh.example.com) and --host-suffix iroh.example.com, clients
-    /// can use http://<nodeId>.iroh.example.com:8080/path instead.
+    /// By default the client accepts both *.localhost and *.irohproxy.net
+    /// as host suffixes. The irohproxy.net wildcard resolves to 127.0.0.1,
+    /// providing macOS compatibility where *.localhost does not resolve natively
+    /// (Safari, Finder/WebDAV, and other apps using mDNSResponder).
+    ///
+    /// With --host-suffix, only the specified suffix is used. A wildcard DNS
+    /// record (e.g. *.iroh.example.com) and --host-suffix iroh.example.com
+    /// lets clients use http://<nodeId>.iroh.example.com:8080/path.
     ///
     /// HTTPS is enabled by providing one of --self-sign, --letsencrypt,
     /// or --tls-cert/--tls-key.
     ///
     /// The node ID is printed to stdout on startup.
     Client {
-        /// Host suffix for routing (the domain after the node ID subdomain)
+        /// Host suffix for routing (the domain after the node ID subdomain).
+        /// Default accepts both *.localhost and *.irohproxy.net.
+        /// Specifying a value overrides both defaults.
         #[arg(long, default_value = "localhost")]
         host_suffix: String,
 
@@ -224,8 +231,14 @@ fn main() -> Result<()> {
                 bail!("--tls-cert and --tls-key must be specified together");
             }
 
+            let host_suffixes = if host_suffix == "localhost" {
+                vec!["localhost".to_string(), "irohproxy.net".to_string()]
+            } else {
+                vec![host_suffix]
+            };
+
             let tls_mode = if self_sign {
-                Some(tls::TlsMode::SelfSigned { host_suffix: host_suffix.clone() })
+                Some(tls::TlsMode::SelfSigned { host_suffixes: host_suffixes.clone() })
             } else if let Some(domain) = letsencrypt {
                 Some(tls::TlsMode::LetsEncrypt(domain))
             } else if let (Some(cert), Some(key)) = (tls_cert, tls_key) {
@@ -263,7 +276,7 @@ fn main() -> Result<()> {
                 .build()?
                 .block_on(async {
                     let endpoint = Endpoint::builder().secret_key(sk).bind().await?;
-                    client::run(endpoint, http_addrs, https_addrs, tls_config, host_suffix).await
+                    client::run(endpoint, http_addrs, https_addrs, tls_config, host_suffixes).await
                 })?;
         }
 
