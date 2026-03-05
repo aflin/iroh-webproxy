@@ -12,7 +12,8 @@ final class PreferencesWindow: NSWindowController {
     private var ipAddressField: NSTextField!
     private var targetAddressField: NSTextField!
     private var keyFileField: NSTextField!
-    private var logLevelPopup: NSPopUpButton!
+    private var targetTlsCheck: NSButton!
+    private var insecureCheck: NSButton!
     private var binaryPathField: NSTextField!
 
     // Section containers
@@ -22,7 +23,7 @@ final class PreferencesWindow: NSWindowController {
     init(proxyManager: ProxyManager) {
         self.proxyManager = proxyManager
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 420),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)
@@ -94,6 +95,12 @@ final class PreferencesWindow: NSWindowController {
         targetAddressField = makeTextField(width: 200)
         serverSection.addArrangedSubview(makeRow("Target Address:", targetAddressField))
 
+        targetTlsCheck = NSButton(checkboxWithTitle: "Connect to secure server (HTTPS)", target: self, action: #selector(tlsChanged))
+        serverSection.addArrangedSubview(targetTlsCheck)
+
+        insecureCheck = NSButton(checkboxWithTitle: "Skip TLS certificate verification", target: nil, action: nil)
+        serverSection.addArrangedSubview(insecureCheck)
+
         keyFileField = makeTextField(width: 200)
         let keyRow = makeRow("Key File:", keyFileField)
         let browseBtn = NSButton(title: "Browse...", target: self, action: #selector(browseKeyFile))
@@ -105,10 +112,6 @@ final class PreferencesWindow: NSWindowController {
 
         // Advanced
         root.addArrangedSubview(makeSectionLabel("Advanced"))
-
-        logLevelPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        logLevelPopup.addItems(withTitles: ["info", "warn", "error", "none"])
-        root.addArrangedSubview(makeRow("Log Level:", logLevelPopup))
 
         binaryPathField = makeTextField(width: 200)
         binaryPathField.placeholderString = "Bundled (default)"
@@ -148,12 +151,12 @@ final class PreferencesWindow: NSWindowController {
         selfSignCheck.state = settings.selfSign ? .on : .off
         ipAddressField.stringValue = settings.ipAddress
         targetAddressField.stringValue = settings.targetAddress
+        targetTlsCheck.state = settings.targetTls ? .on : .off
+        insecureCheck.state = settings.insecure ? .on : .off
+        insecureCheck.isEnabled = settings.targetTls
         keyFileField.stringValue = settings.keyFilePath
         binaryPathField.stringValue = settings.binaryPath
 
-        if let idx = ["info", "warn", "error", "none"].firstIndex(of: settings.logLevel) {
-            logLevelPopup.selectItem(at: idx)
-        }
         updateSectionVisibility()
     }
 
@@ -165,8 +168,9 @@ final class PreferencesWindow: NSWindowController {
         settings.selfSign = selfSignCheck.state == .on
         settings.ipAddress = ipAddressField.stringValue
         settings.targetAddress = targetAddressField.stringValue
+        settings.targetTls = targetTlsCheck.state == .on
+        settings.insecure = insecureCheck.state == .on
         settings.keyFilePath = keyFileField.stringValue
-        settings.logLevel = logLevelPopup.titleOfSelectedItem ?? "warn"
         settings.binaryPath = binaryPathField.stringValue
 
         // Restart proxy if it was running
@@ -185,6 +189,14 @@ final class PreferencesWindow: NSWindowController {
 
     @objc private func modeChanged() {
         updateSectionVisibility()
+    }
+
+    @objc private func tlsChanged() {
+        let tlsOn = targetTlsCheck.state == .on
+        insecureCheck.isEnabled = tlsOn
+        if !tlsOn {
+            insecureCheck.state = .off
+        }
     }
 
     private func updateSectionVisibility() {
@@ -250,18 +262,6 @@ final class PreferencesWindow: NSWindowController {
         return row
     }
 
-    private func makeRow(_ label: String, _ control: NSPopUpButton) -> NSStackView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 8
-        let l = NSTextField(labelWithString: label)
-        l.font = .systemFont(ofSize: 12)
-        l.widthAnchor.constraint(equalToConstant: 100).isActive = true
-        l.alignment = .right
-        row.addArrangedSubview(l)
-        row.addArrangedSubview(control)
-        return row
-    }
 }
 
 private extension NSBox {

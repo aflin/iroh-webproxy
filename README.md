@@ -12,7 +12,7 @@ transparently.
 ## Architecture
 
 ```
-Browser  ──HTTP──▶  Client proxy  ══QUIC/iroh══▶  Server proxy  ──HTTP──▶  Backend
+Browser  ──HTTP──▶  Client proxy  ══QUIC/iroh══▶  Server proxy  ──HTTP/S──▶  Backend
 ```
 
 - **Client proxy** — Runs on your local machine. Listens for HTTP (and optionally
@@ -20,8 +20,8 @@ Browser  ──HTTP──▶  Client proxy  ══QUIC/iroh══▶  Server pro
   connect to, then tunnels all bytes through a QUIC bidirectional stream.
 
 - **Server proxy** — Runs on the machine with the web server. Accepts iroh
-  connections and forwards each stream to a local HTTP backend. No HTTP parsing
-  at all — pure byte-level forwarding.
+  connections and forwards each stream to a local backend (HTTP or HTTPS). No
+  HTTP parsing at all — pure byte-level forwarding.
 
 ## Building
 
@@ -131,7 +131,10 @@ iroh-webproxy server [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-t, --target <ADDR>` | `127.0.0.1:8088` | Local web server address to forward requests to |
+| `-t, --target <TARGET>` | `127.0.0.1:8088` | Target web server (see [target formats](#target-formats)) |
+| `--tls` | | Connect to target over TLS (implied by `https://` target) |
+| `--insecure` | | Skip TLS certificate verification (implied when target is an IP) |
+| `--target-hostname <HOST>` | | Hostname for TLS SNI and certificate verification |
 | `-k, --secret-key <HEX>` | | Secret key as a 64-character hex string |
 | `--key-file <PATH>` | `.iroh-webproxy-secret-key` | Path to the secret key file |
 | `--no-key-save` | | Do not write the secret key to disk |
@@ -139,6 +142,39 @@ iroh-webproxy server [OPTIONS]
 | `--log-level <LEVEL>` | `warn` | Log verbosity: `info`, `warn`, `error`, `none` |
 | `--daemon` | | Detach from terminal and run in the background |
 | `--pidfile <PATH>` | | Write the daemon PID to this file |
+
+### Target formats
+
+The `--target` flag accepts several formats:
+
+| Target | Behavior |
+|--------|----------|
+| `ip:port` | Plain HTTP. Add `--tls` for HTTPS (`--insecure` implied). |
+| `host:port` | Plain HTTP. Add `--tls` for HTTPS (verifies cert against hostname). |
+| `http://host:port` | Plain HTTP. Error if `--tls` is also given. |
+| `https://ip:port` | HTTPS with `--insecure` implied (no hostname to verify against). |
+| `https://host:port` | HTTPS, verifies the certificate against `host`. |
+
+When the target is an IP address with TLS, `--insecure` is implied automatically
+because there is no hostname to verify the certificate against. Use
+`--target-hostname` to supply a hostname and enable verification:
+
+```sh
+# HTTPS to a local IP, skip verification (--insecure implied)
+iroh-webproxy server --target https://192.168.1.10:443
+
+# HTTPS to a local IP, verify against a hostname
+iroh-webproxy server --target https://192.168.1.10:443 --target-hostname myserver.local
+
+# HTTPS to a hostname, certificate verified automatically
+iroh-webproxy server --target https://myserver.local:443
+
+# HTTPS to a hostname, skip verification explicitly
+iroh-webproxy server --target https://myserver.local:443 --insecure
+```
+
+If the target URL omits the port, it defaults to 443 for `https://` and 80 for
+`http://`.
 
 ### Key persistence
 

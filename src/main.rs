@@ -95,10 +95,23 @@ enum Command {
         pidfile: Option<String>,
     },
 
-    /// Run as server proxy: accept iroh connections, forward to local HTTP.
+    /// Run as server proxy: accept iroh connections, forward to a local web server.
     ///
-    /// Accepts connections from iroh-webproxy clients and forwards HTTP
-    /// requests to a local web server.
+    /// Accepts connections from iroh-webproxy clients and forwards requests
+    /// to a local HTTP or HTTPS web server.
+    ///
+    /// The target can be specified as:
+    ///
+    ///   ip:port              plain HTTP (use --tls for HTTPS)
+    ///   http://ip:port       plain HTTP (error if --tls given)
+    ///   https://ip:port      HTTPS, --insecure implied (no hostname to verify)
+    ///   https://host:port    HTTPS, verifies certificate against hostname
+    ///   ip:port --tls        HTTPS, --insecure implied (no hostname to verify)
+    ///   host:port --tls      HTTPS, verifies certificate against hostname
+    ///
+    /// When the target is an IP address with TLS, --insecure is implied because
+    /// there is no hostname to verify the certificate against. Use
+    /// --target-hostname to supply one and enable verification.
     ///
     /// The node ID is printed to stdout on startup. Clients use this
     /// node ID to connect.
@@ -107,9 +120,22 @@ enum Command {
     /// in the current directory and reloads it on subsequent runs so the
     /// node ID stays stable across restarts.
     Server {
-        /// Local web server address to forward requests to
+        /// Target web server (ip:port, host:port, http://host:port, or https://host:port)
         #[arg(short, long, default_value = "127.0.0.1:8088")]
-        target: SocketAddr,
+        target: String,
+
+        /// Connect to target over TLS (implied by https:// target)
+        #[arg(long)]
+        tls: bool,
+
+        /// Skip TLS certificate verification (implied when target is an IP address)
+        #[arg(long)]
+        insecure: bool,
+
+        /// Hostname for TLS SNI and certificate verification (enables verification
+        /// when target is an IP address)
+        #[arg(long, value_name = "HOST")]
+        target_hostname: Option<String>,
 
         /// Secret key as a hex string, overrides any key file
         #[arg(short = 'k', long)]
@@ -235,6 +261,9 @@ fn main() -> Result<()> {
 
         Command::Server {
             target,
+            tls,
+            insecure,
+            target_hostname,
             secret_key,
             key_file,
             no_key_save,
@@ -243,6 +272,8 @@ fn main() -> Result<()> {
             daemon,
             pidfile,
         } => {
+            let parsed = parse_target(&target, tls, insecure, target_hostname.as_deref())?;
+
             let key_path = key_file
                 .as_deref()
                 .unwrap_or(transport::DEFAULT_KEY_FILE);
@@ -272,6 +303,13 @@ fn main() -> Result<()> {
 
             init_tracing(resolve_log_level(log_level, daemon));
 
+            let tls_connector = match parsed.tls_config {
+                Some((config, server_name)) => {
+                    Some((tokio_rustls::TlsConnector::from(config), server_name))
+                }
+                None => None,
+            };
+
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?
@@ -281,12 +319,169 @@ fn main() -> Result<()> {
                         .alpns(vec![ALPN.to_vec()])
                         .bind()
                         .await?;
-                    server::run(endpoint, target).await
+                    server::run(endpoint, parsed.addr, tls_connector).await
                 })?;
         }
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Target parsing
+// ---------------------------------------------------------------------------
+
+struct ParsedTarget {
+    addr: SocketAddr,
+    tls_config: Option<(std::sync::Arc<rustls::ClientConfig>, rustls_pki_types::ServerName<'static>)>,
+}
+
+/// Parse the --target value along with --tls, --insecure, and --target-hostname
+/// into a resolved SocketAddr and optional TLS client config.
+fn parse_target(
+    target: &str,
+    tls_flag: bool,
+    insecure_flag: bool,
+    target_hostname: Option<&str>,
+) -> Result<ParsedTarget> {
+    // Strip scheme if present
+    let (scheme, host_port) = if let Some(rest) = target.strip_prefix("https://") {
+        (Some("https"), rest)
+    } else if let Some(rest) = target.strip_prefix("http://") {
+        (Some("http"), rest)
+    } else {
+        (None, target)
+    };
+
+    // Strip trailing slash from URL-style targets
+    let host_port = host_port.trim_end_matches('/');
+
+    // Determine if TLS should be used
+    let use_tls = match scheme {
+        Some("https") => {
+            if tls_flag {
+                eprintln!("note: --tls is redundant with https:// target");
+            }
+            true
+        }
+        Some("http") => {
+            if tls_flag {
+                bail!("--tls conflicts with http:// target; use https:// or remove the scheme");
+            }
+            false
+        }
+        _ => tls_flag,
+    };
+
+    if insecure_flag && !use_tls {
+        bail!("--insecure requires TLS (use --tls or an https:// target)");
+    }
+    if target_hostname.is_some() && !use_tls {
+        bail!("--target-hostname requires TLS (use --tls or an https:// target)");
+    }
+
+    // Parse host and port from the host_port string
+    let (host, port) = parse_host_port(host_port, scheme)?;
+
+    // Determine if the host is an IP address or a hostname
+    let is_ip = host.parse::<IpAddr>().is_ok();
+
+    // Resolve to SocketAddr
+    let addr = if is_ip {
+        SocketAddr::new(host.parse::<IpAddr>()?, port)
+    } else {
+        use std::net::ToSocketAddrs;
+        let addr_str = format!("{}:{}", host, port);
+        addr_str
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("cannot resolve hostname: {}", host))?
+    };
+
+    if !use_tls {
+        return Ok(ParsedTarget {
+            addr,
+            tls_config: None,
+        });
+    }
+
+    // Determine the TLS hostname for SNI and verification
+    let tls_hostname: Option<String> = if let Some(h) = target_hostname {
+        Some(h.to_string())
+    } else if !is_ip {
+        Some(host.clone())
+    } else {
+        None
+    };
+
+    // If we have no hostname and --insecure wasn't explicitly given,
+    // default to insecure (can't verify a cert against an IP address)
+    let effective_insecure = insecure_flag || tls_hostname.is_none();
+
+    if effective_insecure && !insecure_flag && tls_hostname.is_none() {
+        eprintln!(
+            "note: no hostname for TLS verification, using insecure mode. \
+             Use --target-hostname to enable verification."
+        );
+    }
+
+    let client_config = if effective_insecure {
+        tls::build_tls_client_config_insecure()?
+    } else {
+        tls::build_tls_client_config_verified()?
+    };
+
+    // Build the ServerName for SNI
+    let server_name = match &tls_hostname {
+        Some(name) => rustls_pki_types::ServerName::try_from(name.clone())
+            .map_err(|e| anyhow::anyhow!("invalid TLS hostname '{}': {}", name, e))?,
+        None => rustls_pki_types::ServerName::try_from("localhost".to_string())
+            .expect("localhost is a valid server name"),
+    };
+
+    Ok(ParsedTarget {
+        addr,
+        tls_config: Some((client_config, server_name)),
+    })
+}
+
+/// Parse "host:port" handling IPv6 brackets and default ports.
+fn parse_host_port(s: &str, scheme: Option<&str>) -> Result<(String, u16)> {
+    if s.starts_with('[') {
+        // IPv6: [::1]:port
+        let bracket_end = s
+            .find(']')
+            .ok_or_else(|| anyhow::anyhow!("invalid IPv6 address in target: {}", s))?;
+        let ip_part = &s[1..bracket_end];
+        let rest = &s[bracket_end + 1..];
+        let port = if let Some(port_str) = rest.strip_prefix(':') {
+            port_str
+                .parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("invalid port in target: {}", port_str))?
+        } else {
+            default_port(scheme)?
+        };
+        Ok((ip_part.to_string(), port))
+    } else if let Some(colon_pos) = s.rfind(':') {
+        let host_part = &s[..colon_pos];
+        let port_part = &s[colon_pos + 1..];
+        match port_part.parse::<u16>() {
+            Ok(port) => Ok((host_part.to_string(), port)),
+            Err(_) => bail!("invalid port in target: {}", port_part),
+        }
+    } else {
+        // No port — use default based on scheme
+        let port = default_port(scheme)?;
+        Ok((s.to_string(), port))
+    }
+}
+
+fn default_port(scheme: Option<&str>) -> Result<u16> {
+    match scheme {
+        Some("https") => Ok(443),
+        Some("http") => Ok(80),
+        _ => bail!("port required for target (e.g., host:8088)"),
+    }
 }
 
 /// Write the current process ID to a file (no trailing newline).

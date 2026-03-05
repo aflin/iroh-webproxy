@@ -19,7 +19,8 @@ final class Settings {
         case ipAddress
         case targetAddress
         case keyFilePath
-        case logLevel
+        case targetTls
+        case insecure
         case startAtLogin
         case binaryPath
         case proxyWasRunning
@@ -35,7 +36,8 @@ final class Settings {
             Key.ipAddress.rawValue: "127.0.0.1",
             Key.targetAddress.rawValue: "127.0.0.1:8088",
             Key.keyFilePath.rawValue: "",
-            Key.logLevel.rawValue: "warn",
+            Key.targetTls.rawValue: false,
+            Key.insecure.rawValue: false,
             Key.startAtLogin.rawValue: false,
             Key.binaryPath.rawValue: "",
             Key.proxyWasRunning.rawValue: false,
@@ -78,9 +80,14 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.keyFilePath.rawValue) }
     }
 
-    var logLevel: String {
-        get { defaults.string(forKey: Key.logLevel.rawValue) ?? "warn" }
-        set { defaults.set(newValue, forKey: Key.logLevel.rawValue) }
+    var targetTls: Bool {
+        get { defaults.bool(forKey: Key.targetTls.rawValue) }
+        set { defaults.set(newValue, forKey: Key.targetTls.rawValue) }
+    }
+
+    var insecure: Bool {
+        get { defaults.bool(forKey: Key.insecure.rawValue) }
+        set { defaults.set(newValue, forKey: Key.insecure.rawValue) }
     }
 
     var startAtLogin: Bool {
@@ -103,6 +110,16 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.savedServerNodeId.rawValue) }
     }
 
+    /// Whether current client settings require a privileged port (< 1024).
+    var needsPrivilegedPort: Bool {
+        let mode = self.mode
+        if mode == .client || mode == .both {
+            if httpPort < 1024 { return true }
+            if selfSign && httpsPort < 1024 { return true }
+        }
+        return false
+    }
+
     /// Resolved path to the iroh-webproxy binary.
     var resolvedBinaryPath: String {
         if !binaryPath.isEmpty {
@@ -119,7 +136,6 @@ final class Settings {
         var args = ["client"]
         args += ["--http-port", "\(httpPort)"]
         args += ["--ip-address", ipAddress]
-        args += ["--log-level", logLevel]
         if selfSign {
             args += ["--self-sign"]
             args += ["--https-port", "\(httpsPort)"]
@@ -131,7 +147,12 @@ final class Settings {
     func serverArguments() -> [String] {
         var args = ["server"]
         args += ["--target", targetAddress]
-        args += ["--log-level", logLevel]
+        if targetTls {
+            args += ["--tls"]
+            if insecure {
+                args += ["--insecure"]
+            }
+        }
         if !keyFilePath.isEmpty {
             args += ["--key-file", keyFilePath]
         }

@@ -23,6 +23,7 @@ rcgen = "0.14"
 rustls-pki-types = "1"
 rustls-pemfile = "2"
 hickory-resolver = { version = "0.25", features = ["tokio", "system-config"] }
+webpki-roots = "0.26"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

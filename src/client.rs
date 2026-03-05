@@ -32,6 +32,12 @@ pub async fn run(
         let listener = match TcpListener::bind(addr).await {
             Ok(l) => l,
             Err(e) => {
+                if addr.port() < 1024 && is_permission_error(&e) {
+                    anyhow::bail!(
+                        "cannot bind http://{}: {}. Ports below 1024 require root privileges.",
+                        addr, e
+                    );
+                }
                 warn!("client: cannot bind http://{}: {}", addr, e);
                 continue;
             }
@@ -68,6 +74,12 @@ pub async fn run(
             let listener = match TcpListener::bind(addr).await {
                 Ok(l) => l,
                 Err(e) => {
+                    if addr.port() < 1024 && is_permission_error(&e) {
+                        anyhow::bail!(
+                            "cannot bind https://{}: {}. Ports below 1024 require root privileges.",
+                            addr, e
+                        );
+                    }
                     warn!("client: cannot bind https://{}: {}", addr, e);
                     continue;
                 }
@@ -334,6 +346,11 @@ async fn send_error<S: AsyncWrite + Unpin>(stream: &mut S, status: u16, msg: &st
         msg,
     );
     let _ = stream.write_all(resp.as_bytes()).await;
+}
+
+fn is_permission_error(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::PermissionDenied
+        || e.raw_os_error() == Some(libc::EACCES)
 }
 
 async fn get_connection(

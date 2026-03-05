@@ -3,7 +3,8 @@ use std::io::BufReader;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
 use tracing::warn;
 
 pub enum TlsMode {
@@ -80,4 +81,68 @@ fn load_pem_files(
         .ok_or_else(|| anyhow::anyhow!("no private key found in {}", key_path))?;
 
     Ok((certs, key))
+}
+
+// ---------------------------------------------------------------------------
+// TLS client config (for server → backend HTTPS connections)
+// ---------------------------------------------------------------------------
+
+/// Build a TLS client config that verifies certificates against well-known roots.
+pub fn build_tls_client_config_verified() -> Result<Arc<rustls::ClientConfig>> {
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
+/// Build a TLS client config that skips all certificate verification.
+pub fn build_tls_client_config_insecure() -> Result<Arc<rustls::ClientConfig>> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .context("failed to set TLS protocol versions")?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(InsecureVerifier(provider)))
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
+#[derive(Debug)]
+struct InsecureVerifier(Arc<rustls::crypto::CryptoProvider>);
+
+impl ServerCertVerifier for InsecureVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &rustls_pki_types::ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
 }
