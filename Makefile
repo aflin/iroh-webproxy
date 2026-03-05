@@ -1,6 +1,9 @@
-.PHONY: build static clean install install-static install-rampart
+.PHONY: build static clean install install-static install-rampart app dmg
 
 ARCH := $(shell uname -m)
+OS := $(shell uname -s)
+HAS_SWIFT := $(shell command -v swift >/dev/null 2>&1 && echo yes || echo no)
+
 ifeq ($(ARCH),x86_64)
   MUSL_TARGET := x86_64-unknown-linux-musl
 else ifeq ($(ARCH),aarch64)
@@ -15,12 +18,48 @@ endif
 
 build:
 	MACOSX_DEPLOYMENT_TARGET=11.0 cargo build --release
+ifeq ($(OS),Darwin)
+ifeq ($(HAS_SWIFT),yes)
+	@$(MAKE) -C irohWebProxy app
+else
+	@echo "Warning: Swift toolchain not found. Skipping macOS app build."
+	@echo "Install Xcode or Command Line Tools to build irohWebProxy.app."
+endif
+endif
 
 static:
 	cargo build --release --target $(MUSL_TARGET)
 
+app:
+ifeq ($(OS),Darwin)
+ifeq ($(HAS_SWIFT),yes)
+	@$(MAKE) -C irohWebProxy app
+else
+	@echo "Error: Swift toolchain not found. Cannot build macOS app."
+	@echo "Install Xcode or Command Line Tools to build irohWebProxy.app."
+	@exit 1
+endif
+else
+	@echo "Error: macOS app can only be built on macOS."
+	@exit 1
+endif
+
+dmg: build
+ifeq ($(OS),Darwin)
+ifeq ($(HAS_SWIFT),yes)
+	@$(MAKE) -C irohWebProxy dmg
+else
+	@echo "Error: Swift toolchain not found. Cannot build DMG."
+	@exit 1
+endif
+else
+	@echo "Error: DMG can only be built on macOS."
+	@exit 1
+endif
+
 clean:
 	cargo clean
+	@if [ -d irohWebProxy ]; then $(MAKE) -C irohWebProxy clean; fi
 
 install: build
 	cp target/release/iroh-webproxy /usr/local/bin/
