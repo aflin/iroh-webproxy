@@ -90,7 +90,7 @@ enum Command {
         #[arg(long)]
         daemon: bool,
 
-        /// Write the process ID to this file after daemonizing
+        /// Write the process ID to a file (the post-fork PID when combined with --daemon)
         #[arg(long, value_name = "PATH")]
         pidfile: Option<String>,
     },
@@ -135,7 +135,7 @@ enum Command {
         #[arg(long)]
         daemon: bool,
 
-        /// Write the process ID to this file after daemonizing
+        /// Write the process ID to a file (the post-fork PID when combined with --daemon)
         #[arg(long, value_name = "PATH")]
         pidfile: Option<String>,
     },

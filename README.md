@@ -138,6 +138,7 @@ iroh-webproxy server [OPTIONS]
 | `--no-key-load` | | Do not auto-load the key file on startup |
 | `--log-level <LEVEL>` | `warn` | Log verbosity: `info`, `warn`, `error`, `none` |
 | `--daemon` | | Detach from terminal and run in the background |
+| `--pidfile <PATH>` | | Write the daemon PID to this file |
 
 ### Key persistence
 
@@ -162,6 +163,7 @@ iroh-webproxy client [OPTIONS]
 | `-k, --secret-key <HEX>` | | Secret key as hex string or path to key file |
 | `--log-level <LEVEL>` | `warn` | Log verbosity: `info`, `warn`, `error`, `none` |
 | `--daemon` | | Detach from terminal and run in the background |
+| `--pidfile <PATH>` | | Write the daemon PID to this file |
 
 ### TLS options
 
@@ -185,6 +187,14 @@ implies `--log-level none`.
 # Capture the node ID, then the process backgrounds itself
 NODE_ID=$(iroh-webproxy server --daemon)
 echo "Server running with node ID: $NODE_ID"
+```
+
+Use `--pidfile` to record the daemon's PID for reliable process management:
+
+```sh
+iroh-webproxy server --daemon --pidfile /tmp/iroh-server.pid
+# Later, stop the daemon:
+kill "$(cat /tmp/iroh-server.pid)"
 ```
 
 ## License
