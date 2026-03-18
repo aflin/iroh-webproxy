@@ -385,8 +385,14 @@ async fn send_error<S: AsyncWrite + Unpin>(stream: &mut S, status: u16, msg: &st
 }
 
 fn is_permission_error(e: &std::io::Error) -> bool {
-    e.kind() == std::io::ErrorKind::PermissionDenied
-        || e.raw_os_error() == Some(libc::EACCES)
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        return true;
+    }
+    #[cfg(unix)]
+    if e.raw_os_error() == Some(libc::EACCES) {
+        return true;
+    }
+    false
 }
 
 async fn get_connection(

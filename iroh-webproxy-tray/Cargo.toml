@@ -1,0 +1,31 @@
+[package]
+name = "iroh-webproxy-tray"
+version = "0.1.0"
+edition = "2021"
+description = "System tray application for iroh-webproxy"
+
+[[bin]]
+name = "iroh-webproxy-tray"
+path = "src/main.rs"
+
+[dependencies]
+tray-icon = "0.21"
+muda = "0.17"
+native-windows-gui = "1.0.13"
+native-windows-derive = "1.0.5"
+winreg = "0.56"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+embed-resource = "3"
+
+[dependencies.windows-sys]
+version = "0.59"
+features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+]
