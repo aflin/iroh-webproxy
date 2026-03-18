@@ -65,7 +65,7 @@ pub async fn run(
                 let pool = pool.clone();
                 let suffixes = suffixes.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, ep, pool, &suffixes).await {
+                    if let Err(e) = handle_connection(stream, ep, pool, &suffixes, false).await {
                         warn!("client: connection error: {}", e);
                     }
                 });
@@ -118,7 +118,7 @@ pub async fn run(
                                 return;
                             }
                         };
-                        if let Err(e) = handle_connection(tls_stream, ep, pool, &suffixes).await {
+                        if let Err(e) = handle_connection(tls_stream, ep, pool, &suffixes, true).await {
                             warn!("client: connection error: {}", e);
                         }
                     });
@@ -140,7 +140,7 @@ pub async fn run(
 
 /// Handle a single browser connection: read HTTP headers to determine the
 /// target node, then tunnel all bytes verbatim through a QUIC bidi stream.
-async fn handle_connection<S>(mut stream: S, endpoint: Endpoint, pool: ConnPool, host_suffixes: &[Arc<str>]) -> Result<()>
+async fn handle_connection<S>(mut stream: S, endpoint: Endpoint, pool: ConnPool, host_suffixes: &[Arc<str>], is_https: bool) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -182,6 +182,17 @@ where
     };
 
     info!("client: routing to node {}", node_id.fmt_short());
+
+    // Inject X-Forwarded-Proto and X-Forwarded-Host headers so the backend
+    // can reconstruct the original URL the browser used.
+    let host_value = get_host_header(&buf[..header_end]).unwrap_or("").to_string();
+    let proto = if is_https { "https" } else { "http" };
+    let extra = format!("X-Forwarded-Proto: {}\r\nX-Forwarded-Host: {}\r\n", proto, host_value);
+    let mut new_buf = Vec::with_capacity(buf.len() + extra.len());
+    new_buf.extend_from_slice(&buf[..header_end - 2]);
+    new_buf.extend_from_slice(extra.as_bytes());
+    new_buf.extend_from_slice(&buf[header_end - 2..]);
+    buf = new_buf;
 
     // Get or create a QUIC connection to the target node.
     let conn = match get_connection(&endpoint, &pool, node_id).await {
