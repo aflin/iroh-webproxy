@@ -275,7 +275,7 @@ fn main() -> Result<()> {
                 .enable_all()
                 .build()?
                 .block_on(async {
-                    let endpoint = Endpoint::builder().secret_key(sk).bind().await?;
+                    let endpoint = Endpoint::builder(iroh::endpoint::presets::N0).secret_key(sk).bind().await?;
                     client::run(endpoint, http_addrs, https_addrs, tls_config, host_suffixes).await
                 })?;
         }
@@ -304,7 +304,7 @@ fn main() -> Result<()> {
             } else if !no_key_load && std::path::Path::new(key_path).exists() {
                 transport::load_secret_key_file(key_path)?
             } else {
-                iroh::SecretKey::generate(&mut rand::rng())
+                iroh::SecretKey::generate()
             };
 
             if !no_key_save {
@@ -335,7 +335,7 @@ fn main() -> Result<()> {
                 .enable_all()
                 .build()?
                 .block_on(async {
-                    let endpoint = Endpoint::builder()
+                    let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
                         .secret_key(sk)
                         .alpns(vec![ALPN.to_vec()])
                         .bind()

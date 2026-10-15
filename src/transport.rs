@@ -58,7 +58,7 @@ pub const DEFAULT_KEY_FILE: &str = ".iroh-webproxy-secret-key";
 /// Load a secret key from a hex string or file path. If `None`, generate a new one.
 pub fn load_secret_key(key_arg: Option<&str>) -> anyhow::Result<iroh::SecretKey> {
     match key_arg {
-        None => Ok(iroh::SecretKey::generate(&mut rand::rng())),
+        None => Ok(iroh::SecretKey::generate()),
         Some(s) => {
             // Try as hex first (64 hex chars = 32 bytes)
             if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {

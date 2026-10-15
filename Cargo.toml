@@ -10,13 +10,12 @@ name = "iroh-webproxy"
 path = "src/main.rs"
 
 [dependencies]
-iroh = "0.96"
+iroh = "1.3"
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
-rand = "0.9"
 rustls = { version = "0.23", features = ["ring"] }
 tokio-rustls = "0.26"
 rcgen = "0.14"
